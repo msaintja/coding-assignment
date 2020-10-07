@@ -1,217 +1,118 @@
-# Coding assignment - Food database
+# Coding assignment - Proposal details
 
-In the context of computer vision, detection tasks with open class domains require more flexibility than flat class distinction in simple vision tasks (dog/cat classification). 
+This is my solution proposal for the coding assignment from Foodvisor. The original description can be found [here](https://github.com/Foodvisor/coding-assignment/blob/master/README.md).
 
+---
+Quick jump to:
+- [Design and implementation choices](#design-and-implementation-choices)
+- [Running the code/tests](#running-the-code/tests)
+- [Credits](#credits)
 
+---
 
-## Context
+## Design and implementation choices
 
-At Foodvisor, expanding activities in a new regions often means that extra object classes have to be recognized. Below are some reasons why the end target class structure may not be defined at a given moment $t$:
+### Observations
+First, here are a few observations:
 
-- **Data availability**: not enough existing images of the corresponding item at $t$
-- **Task evaluation changes**: user expectations about detection granularity changes
+1. Reading the description, there are two key events in this system, which occur when we insert a node in the graph:
+    - we need to change the status of the images linked to the **parent** of this node, and
+    - we change the status of the images linked to the **siblings** (i.e. other children of the parent) of this node.
 
-We'll define two concepts:
+2. In this situation, since inserts into the graph are performed in order (top to bottom / root to the innermost leaves), then we only need to consider direct descendants and parents rather than all predecessors and successors.
 
-- **coverage**: ratio of observed classes that are correctly categorized in ground truths, parent category included
-- **granularity**: ratio of observed items that have distinct labels in the class structure
+### Node relationships: descendants view vs. parents view
+In order to encode the relationships between nodes in the graph, we may have two views of the problem: 
+- either to build a set of descendants, for each node (descendants view)
+- or to build a dictionary/lookup table indicating the parent of each node (parents view).
 
-Consider the following examples for an image classification problem:
+While the second option may seem more natural, or in phase with the way the data is given as input (lists of nodes and their parent), I chose to implement the first option. It makes more sense considering the events we have to implement described in *1.* above. 
 
-1. **Coverage change**: given a certain labeling budget, your team first decides to define the class structure as follows: fruits, meat, fish, which satisfies users coverage expectations at $t$. Now at $t' > t$, users expects vegetables to be recognized.
-2. **Granularity change**: given a certain labeling budget, your team first decides to define the class structure as follows: vegetables, fruits, meat, fish, which satisfies users granularity expectations at $t$. Now at $t' > t$, users expects beef and pork to be distinguished.
+Consider the following time complexities table:
 
-Hence the new for a flexible class structure to continuously adapt to changes in user expectations, while maintaining a reasonable labeling budget.
+| Operation \ Design 	| Descendants view                                              	| Parents view 	|
+|--------------------	|---------------------------------------------------------------	|--------------	|
+| Retrieve parent    	| O(1)                                                          	| O(1)         	|
+| Retrieve siblings  	| [O(1) avg.](https://wiki.python.org/moin/TimeComplexity#dict) 	| O(n) exact   	|
 
+Retrieving the parent of a node is cheap in both cases, especially since we get this information from the input tuples. With the descendants view, we only need to find the value associated to the parent key in a dict - which has an average time complexity of O(1) to get back a set of all siblings. Conversely, with the parents view, we would need to test for each of the nodes we have whether their parent is the target parent, costing us an exact O(n) time.
 
+Alternatively, we could build more elaborate data structures (e.g. a Node object) containing information both on parents and descendants, but this didn't seem necesary here as we have very few properties to keep track of. So I don't think it warrants the extra cost of having to maintain multiple/symmetrical "copies" of the same information when a single dict of strings + sets of strings work.
 
-## Assignment
+### Stucture for images information
 
-In this assignment, you will define a data structure that handles both coverage and granularity changes using a directed graph structure. Say $O$ is the ensemble of all existing objects, and that, as a first approach we define $A,B,C$ as child nodes of $O$ to be labeled.
+We are once again confronted with the choice of a data structure to store information about the images.
 
--  Consider the case of coverage extension: add $D$ as child node of $O$
-- Consider the case of granularity extension: add $E, F$ as child nodes of $A$
+First, let's note that with `get_extract_status()`, we need to retrieve information about all images anyways.
 
-Taking a snapshot of your class structure at $t$, you'll want to maximize both coverage and granularity of your existing labeled data. 
+Also, let us consider that having a mapping from images to nodes (in a similar form to the input we're given) would be expensive because we need to update the images' status based on node information (and not the other way around). In this situation, when we would want to perform an update, we would need to iterate over all **existing** images to find the relevant nodes (parents/siblings), costing us a hefty O(n·m) time complexity - n and m being the number of nodes and images, respectively.
 
-- In first case above, if classes are one-hot-encoded, the encoding vector length needs to be extended.
-- In second case above, data labeled as $A$ will have to be staged for next labeling task to be either $E$ or $F$, meaning that the information of those being child nodes of $A$, need to persist in your data structure.
+My proposed solution is to handle two mappings, one from nodes their associated set of images, and the other from images to their status.  
+We incur a higher time complexity when calling `add_extract()`, as we will need to iterate through all **new** nodes and images. We need this nested loop in O(n'·m') time complexity because we need to check that all nodes are valid (here, n' and m' being the number of **new** nodes and images, respectively).  
+However, the update here is cheaper since we directly know with the mapping which images need a status update for a target node.
 
-### Submission
+### Case of invalid information
 
-Your submission is expected to be a GitHub (or similar) repository, implemented in Python3.
+From the description, it is not explicit whether invalid references to non-existent nodes should be kept. e.g. if `img003` references node `E` that is not in the graph, should this reference be kept in case node `E` is added later on.
 
-Your repository should include:
+Here we choose not to keep the information linking images to invalid nodes, however if this is not the intended behavior, or if requirements change, it would be easy to adapt the code to keep adding references to these invalid nodes and update the associated images' status should this invalid node be added later.
 
-- instructions to install requirements to run your code
-- credits to the different repositories or resources that you used for your implementation
+### Possible improvements, concerns
 
+#### Root node
+The original description mentions building the reference abstract category in the constructor,
+>"A reference abstract category (named core in the following examples) will need to be created in your constructor"
 
+with test cases adding this same "core" node *a posteriori* - but is handled separately. The description for the `add_nodes()` method suggest that it is that method's responsibility rather than the constructor's to build the root node.
 
-**Task**
+>"If the parent node is None, this operation should be conducted first and will define the root node"
 
-Define a `Database` class (in the database.py file) able to continuously maximize coverage and granularity of existing labeled data. A reference abstract category (named `core` in the following examples) will need to be created in your constructor (cf. ensemble $O$ mentioned in the previous section)
+Here, I left it as it was presented in test cases - built in constructor and with the rest of the list passed to `add_nodes()`.
 
-**Design requirements**
+#### Other improvements
 
-`Database` class will need to have the following methods implemented:
+A great number of improvements can be added to this code. As they were not the object of the presented test cases, I did not implement all of them considering they may or may not be relevant nor useful depending on the used datasets/nodes/images. Here is a non-exhaustive list:
+- Introduce a hard check that each parent must exist when adding nodes.
+- Pre-sort the node list for dependencies / find the source(s) node(s) + ordering in a DAG. e.g. [("core", None), ("A1", "A"), ("A", "core")] wouldn't be an issue.
+- Forbid the addition of nodes with existing names.
+- Forbid the addition of nodes with a `None` parent if one was already added.
+- Forbid the addition of images with existing names, or merge these objects to keep labels/nodes of both.
+- etc.
 
-- `add_nodes`: takes a list of tuples as input and edit the graph
-- `add_extract`: takes a dict as input and stored information appropriately
-- `get_extract_status`: returns the status of each image considering graph modifications that occurred after the extract was added. 
+---
 
-Feel free to create any additional classes or data structures you deem necessary.
+## Running the code/tests
+ 
+### Environment and setup
 
-**Inputs**
+This code was tested using Python 3.7.5 and pytest 1.6.1 on Linux.  
+YMMV - trying to run the code on Windows may show you an unrelated warning such as [this one](https://docs.pytest.org/en/latest/), depending on your existing environment.  
 
-The `add_nodes` method takes a list of tuples as input. Each tuple has two elements: the first being the ID of a new node, and the second the ID of the parent node. If the parent node is `None`, this operation should be conducted first and will define the root node. Each non-empty graph will start with a tuple whose second member is `None` (it is the expected name of your core abstract category that needs to be created when the graph is instantiated).
-
-
-
-Once created, nodes can only be added to the graph. But depending on the parent node, it will have different effect on our class structure:
-
-- coverage extension
-
-```python
-[("A", "core"), ("B", "core"), ("C", "core")]
+You may install pytest directly, or use the supplied `requirements.txt` file.  
+For example, with `pip`※:
+```
+pip install -r requirements.txt
 ```
 
-- granularity extension
+You can also run this within a virtual env or conda environment.
 
-```python
-[("A1", "A"), ("A2", "A"), ("C1", "C")]
+If you want to use pytest (recommended) and run all test cases, please make sure that `expected_status.json`, `graph_build.json`, `graph_edits.json` and `img_extract.json` from the [original release attachments](https://github.com/msaintja/coding-assignment/releases/tag/v0.1.0) are correctly located in the `tests/` directory.
+
+### Execution
+You may import the `Database` class directly within the python interpreter, or a standalone script.
+
+Using pytest, you may check that all test cases from the original description have the intended output by running※:
 ```
-
-- mixed operation
-
-```python
-[("D", "core"), ("D1", "D"), ("D2", "D")]
+python -m pytest
 ```
+which should confirm that the tests passed.
 
+### Note
+※ Please make sure you're running the commands in the base `coding-assignment` directory.
 
+---
+## Credits
 
-The `add_extract` method takes a dict as input where the keys are image names, and values are list of class/node IDs (string).
+The tests written and found in the `tests/` directory are all test cases described in the [original description](https://github.com/Foodvisor/coding-assignment/blob/master/README.md). 
 
-```python
-{"img001": ["A"], "img002": ["C1"]}
-```
-
-
-
-Lastly, the `get_extract_status` method will return the status of each data sample from the extract, which can either be:
-
-- `invalid`: some labels could not be matched against database
-- `valid`: label is matched and no operation is required
-- `granularity_staged`: label is matched but some labels have new child nodes in the database
-- `coverage_staged`: label is matched but direct parent node has a new child node since last update (priority again granularity_staged)
-
-```python
-{"img001": "granularity_staged", "img002": "valid"}
-```
-
-### Evaluation
-
-Here is an input example
-
-```python
-from database import Database
-
-# Initial graph
-build = [("core", None), ("A", "core"), ("B", "core"), ("C", "core"), ("C1", "C")]
-# Extract
-extract = {"img001": ["A"], "img002": ["C1"]}
-# Graph edits
-edits = [("A1", "A"), ("A2", "A")]
-
-# Get status (this is only an example, test your code as you please as long as it works)
-status = {}
-if len(build) > 0:
-    # Build graph
-    db = Database(build[0][0])
-    if len(build) > 1:
-    	db.add_nodes(build[1:])
-    # Add extract
-    db.add_extract(extract)
-    # Graph edits
-    db.add_nodes(edits)
-    # Update status
-    status = db.get_extract_status()
-print(status)
-```
-
-should return
-
-```python
-{"img001": "granularity_staged", "img002": "valid"}
-```
-
-**explanation**
-
-"A" has new child nodes since labeled data was provided thus "granularity_staged" for img001
-
-
-
-Here is an another example
-
-```python
-from database import Database
-
-# Initial graph
-build = [("core", None), ("A", "core"), ("B", "core"), ("C", "core"), ("C1", "C")]
-# Extract
-extract = {"img001": ["A", "B"], "img002": ["A", "C1"], "img003": ["B", "E"]}
-# Graph edits
-edits = [("A1", "A"), ("A2", "A"), ("C2", "C")]
-
-# Get status (this is only an example, test your code as you please as long as it works)
-status = {}
-if len(build) > 0:
-    # Build graph
-    db = Database(build[0][0])
-    if len(build) > 1:
-    	db.add_nodes(build[1:])
-    # Add extract
-    db.add_extract(extract)
-    # Graph edits
-    db.add_nodes(edits)
-    # Update status
-    status = db.get_extract_status()
-print(status)
-```
-
-and the expected result of `status` method
-
-should return:
-
-```python
-{"img001": "granularity_staged", "img002": "coverage_staged", "img003": "invalid"}
-```
-
-**explanation**
-
-img001 has "A" as label, which got extended granularity
-
-img002 has "C1" as label, its parent node "C" has a new node "C2" since then. It also has "A" label but coverage staging has priority over granularity staging
-
-img003 has an unmatched label "E"
-
-
-
-Your implementation should yield the same `get_extract_status` output as expected. 
-
-Not meeting this success condition does not necessarily mean that your application won't be considered further, but we expect you to produce code of your own. <u>Plagiarism will not be considered lightly.</u>
-
-
-
-### Data
-
-Please check this [release](https://github.com/Foodvisor/coding-assignment/releases/tag/v0.1.0) attachments for the data you can use to test your code:
-
-- graph_build.json: graph nodes initial build
-- img_extract.json: image template
-- graph_edits.json: node additions to perform
-- expected_status.json: the expected output of the `get_extract_status` method
-
-
-
-Best of luck!
+The tests rely on the `pytest` library, distributed by Holger Krekel et al. under MIT licence. [[PyPI](https://pypi.org/project/pytest/), [GitHub](https://docs.pytest.org/en/latest/), [Documentation](https://docs.pytest.org/en/latest/)]
