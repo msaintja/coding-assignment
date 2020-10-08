@@ -86,7 +86,7 @@ A great number of improvements can be added to this code. As they were not the o
 ### Environment and setup
 
 This code was tested using Python 3.7.5 and pytest 1.6.1 on Linux.  
-YMMV - trying to run the code on Windows may show you an unrelated warning such as [this one](https://docs.pytest.org/en/latest/), depending on your existing environment.  
+YMMV - trying to run the code on Windows may show you an unrelated warning such as [this one](https://github.com/pyreadline/pyreadline/issues/65), depending on your existing environment.  
 
 You may install pytest directly, or use the supplied `requirements.txt` file.  
 For example, with `pip`※:
